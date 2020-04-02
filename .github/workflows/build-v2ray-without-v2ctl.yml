@@ -1,0 +1,70 @@
+name: Build V2ray (without v2ctl)
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  SSH_ACTIONS: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@master
+
+    - name: Initialization environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo swapoff /swapfile
+        sudo rm -rf /swapfile /etc/apt/sources.list.d/*
+        sudo -E apt-get -qq update
+        sudo -E apt-get -qq install build-essential asciidoc binutils bzip2 gawk gettext git libncurses5-dev libz-dev patch unzip zlib1g-dev lib32gcc1 libc6-dev-i386 subversion flex uglifyjs git-core gcc-multilib p7zip p7zip-full msmtp libssl-dev texinfo libglib2.0-dev xmlto qemu-utils upx libelf-dev autoconf automake libtool autopoint device-tree-compiler snapd
+        sudo -E snap install go --classic
+        curl -fsSL https://raw.githubusercontent.com/P3TERX/dotfiles/master/.bashrc >> ~/.bashrc
+
+    - name: Get source code
+      run: go get -u -insecure v2ray.com/core/...
+
+    - name: Modify all.go
+      run: sed -i -e '/v2ray.com\/core\/main\/json\"/s#_#// _#' -e '/v2ray.com\/core\/main\/jsonem\"/s#// _#_#' $HOME/go/src/v2ray.com/core/main/distro/all/all.go
+
+    - name: Compile v2ray
+      id: compile
+      run: |
+        cd $HOME/go/src/v2ray.com/core/main/
+        env CGO_ENABLED=0 GOOS=linux GOARCH=mipsle go build -o /home/runner/v2ray -ldflags "-s -w"
+        upx --lzma --best /home/runner/v2ray
+        echo "::set-output name=status::success"
+
+    - name: SSH connection to Actions
+      uses: P3TERX/debugger-action@master
+      if: env.SSH_ACTIONS == 'true'
+
+    - name: Create Release
+      id: create_release
+      continue-on-error: true
+      uses: actions/create-release@latest
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        allow_duplicate: true
+        tag_name: ${{ github.ref }}
+        release_name: Release ${{ github.ref }}
+        draft: false
+        prerelease: false
+          
+    - name: Upload Release Asset
+      id: upload-release-asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: /home/runner/v2ray
+        asset_name: v2ray_mipsle
+        asset_content_type: application/zip
